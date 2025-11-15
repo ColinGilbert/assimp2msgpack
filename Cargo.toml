@@ -1,0 +1,10 @@
+[package]
+name = "assimp2msgpack"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+noobwerkz = { git = "https://www.github.com/ColinGilbert/noobwerkz-ng", branch ="master" }
+msgpacker = "0.4.8"
+russimp-ng = "3.2.7"
+image = "0.25.8"
