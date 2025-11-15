@@ -1,8 +1,8 @@
 use glam::*;
 use msgpacker::prelude::*;
 use noobwerkz::serialized_model::*;
-use russimp_ng::{Matrix4x4, Vector3D, material::*};
-use russimp_ng::{node::Node, scene::*};
+use russimp_ng::*;
+use russimp_ng::{node::Node, scene::*, material::*};
 use std::borrow::*;
 use std::cell::*;
 use std::collections::*;
@@ -52,15 +52,14 @@ fn recursive_helper(
     }
 
     let mat = matrix_to_raw(node.transformation);
+    let parent_transform = parent_transform * glam::Mat4::from_cols_array_2d(&mat);
     for i in &node.meshes {
-        let (scale, rotation, translation) = glam::Mat4::to_scale_rotation_translation(
-            &(parent_transform * glam::Mat4::from_cols_array_2d(&mat)),
-        );
+        let (scale, rotation, translation) =
+            glam::Mat4::to_scale_rotation_translation(&parent_transform);
         meshes[*i as usize].scale = scale.into();
         meshes[*i as usize].rotation = rotation.into();
         meshes[*i as usize].translation = translation.into();
     }
-    let parent_transform = parent_transform * glam::Mat4::from_cols_array_2d(&mat);
 
     for c in node.children.borrow().iter() {
         let child: &Node = c.borrow();
@@ -87,7 +86,13 @@ fn main() {
 
     let post_process_flags = vec![
         PostProcess::Triangulate,
-        PostProcess::GenerateNormals, // Example: Generate normals if missing
+        PostProcess::SortByPrimitiveType,
+        PostProcess::GenerateNormals,
+        PostProcess::RemoveRedundantMaterials,
+        PostProcess::OptimizeGraph,
+        PostProcess::ValidateDataStructure,
+        PostProcess::FindDegenerates,
+        PostProcess::FixOrRemoveInvalidData,
     ];
     let mut bones_to_inverse_bind_poses = HashMap::<String, [[f32; 4]; 4]>::new();
     let mut result = SerializedModel::new();
@@ -103,16 +108,20 @@ fn main() {
             mesh.max_extents[1] - mesh.min_extents[1],
             mesh.max_extents[2] - mesh.min_extents[2],
         ];
+
         for v in m.vertices {
             mesh.positions.push([v.x, v.y, v.z]);
         }
+
         for n in m.normals {
             mesh.normals.push([n.x, n.y, n.z]);
         }
 
-        for t in m.texture_coords {
-            for tex in t.unwrap_or_else(|| Vec::<Vector3D>::new()) {
-                mesh.uvs.push([tex.x, tex.y]);
+        for t in m.texture_coords.iter() {
+            for tt in t.iter() {
+                    for tex in tt {
+                        mesh.uvs.push([tex.x, tex.y]);
+                    }
             }
         }
 
@@ -134,7 +143,7 @@ fn main() {
                         if w == 0.0 {
                             mesh.bone_weights[id as usize][i] = weight;
                             mesh.bone_indices[id as usize][i] = bone_name_idx as u32;
-                            break
+                            break;
                         }
                         i += 1;
                     }
@@ -166,7 +175,7 @@ fn main() {
             &mut result.meshes,
         );
 
-        // We now need to change the bone indices on all the serialized meshes to reflect the bones
+        // We now need to change the bone indices on all the serialized meshes to reflect the bones that have been placed into different positions by recursive_helper
         for mesh in result.meshes.iter_mut() {
             for bi in mesh.bone_indices.iter_mut() {
                 let mut i = 0;
@@ -242,7 +251,7 @@ fn main() {
                     .unwrap()
                     .into_inner();
             material.diffuse_texture_path = diffuse.filename.clone();
-            println!("contains diffuse texture: {}", diffuse.filename.clone());
+            println!("Contains diffuse texture: {}", diffuse.filename.clone());
         }
 
         if mat.textures.contains_key(&TextureType::Normals) {
@@ -251,7 +260,8 @@ fn main() {
                 Rc::<RefCell<russimp_ng::material::Texture>>::try_unwrap(normals_texture.clone())
                     .unwrap()
                     .into_inner();
-            material.normals_texture_path = normals.filename;
+            material.normals_texture_path = normals.filename.clone();
+            println!("Contains normals texture: {}", normals.filename.clone());
         }
 
         if mat.textures.contains_key(&TextureType::Specular) {
@@ -261,7 +271,8 @@ fn main() {
                     .unwrap()
                     .into_inner();
 
-            material.specular_texture_path = specular.filename;
+            material.specular_texture_path = specular.filename.clone();
+            println!("Contains specular texture: {}", specular.filename.clone());
         }
 
         result.materials.push(material);
