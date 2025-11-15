@@ -8,3 +8,4 @@ noobwerkz = { git = "https://www.github.com/ColinGilbert/noobwerkz-ng", branch =
 msgpacker = "0.4.8"
 russimp-ng = "3.2.7"
 image = "0.25.8"
+glam = "0.30.9"

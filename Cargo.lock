@@ -268,6 +268,7 @@ dependencies = [
 name = "assimp2msgpack"
 version = "0.1.0"
 dependencies = [
+ "glam 0.30.9",
  "image",
  "msgpacker",
  "noobwerkz",
@@ -2715,7 +2716,7 @@ dependencies = [
 [[package]]
 name = "noobwerkz"
 version = "0.0.1"
-source = "git+https://www.github.com/ColinGilbert/noobwerkz-ng?branch=master#0bae56b62edf3341a848c8a75f9374dc65559650"
+source = "git+https://www.github.com/ColinGilbert/noobwerkz-ng?branch=master#f672340b70648792b46fc73258bfe96e7d869bad"
 dependencies = [
  "anyhow",
  "bincode",

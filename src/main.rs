@@ -1,6 +1,7 @@
+use glam::*;
 use msgpacker::prelude::*;
 use noobwerkz::serialized_model::*;
-use russimp_ng::{Vector3D, material::*};
+use russimp_ng::{Matrix4x4, Vector3D, material::*};
 use russimp_ng::{node::Node, scene::*};
 use std::borrow::*;
 use std::cell::*;
@@ -9,12 +10,40 @@ use std::fs::*;
 use std::io::*;
 use std::rc::*;
 
+fn matrix_to_raw(matrix: Matrix4x4) -> [[f32; 4]; 4] {
+    let mut result = [[0.0 as f32; 4]; 4];
+
+    result[0][0] = matrix.a1;
+    result[1][0] = matrix.a2;
+    result[2][0] = matrix.a3;
+    result[3][0] = matrix.a4;
+
+    result[0][1] = matrix.b1;
+    result[1][1] = matrix.b2;
+    result[2][1] = matrix.b3;
+    result[3][1] = matrix.b4;
+
+    result[0][2] = matrix.c1;
+    result[1][2] = matrix.c2;
+    result[2][2] = matrix.c3;
+    result[3][2] = matrix.c4;
+
+    result[0][3] = matrix.d1;
+    result[1][3] = matrix.d2;
+    result[2][3] = matrix.d3;
+    result[3][3] = matrix.d4;
+
+    result
+}
+
 // The function gathers the bone names and inverse bind pose matrices in depth-first order,
 fn recursive_helper(
     node: &Node,
+    parent_transform: &glam::Mat4,
     bones_to_inverse_bind_poses: &HashMap<String, [[f32; 4]; 4]>,
     bone_names_vec: &mut Vec<String>,
     inverse_bind_matrices_vec: &mut Vec<[[f32; 4]; 4]>,
+    meshes: &mut Vec<SerializedMesh>,
 ) {
     let name = &node.name;
     if bones_to_inverse_bind_poses.contains_key(name) && !bone_names_vec.contains(name) {
@@ -22,13 +51,26 @@ fn recursive_helper(
         inverse_bind_matrices_vec.push(bones_to_inverse_bind_poses[name]);
     }
 
+    let mat = matrix_to_raw(node.transformation);
+    for i in &node.meshes {
+        let (scale, rotation, translation) = glam::Mat4::to_scale_rotation_translation(
+            &(parent_transform * glam::Mat4::from_cols_array_2d(&mat)),
+        );
+        meshes[*i as usize].scale = scale.into();
+        meshes[*i as usize].rotation = rotation.into();
+        meshes[*i as usize].translation = translation.into();
+    }
+    let parent_transform = parent_transform * glam::Mat4::from_cols_array_2d(&mat);
+
     for c in node.children.borrow().iter() {
         let child: &Node = c.borrow();
         recursive_helper(
             child,
+            &parent_transform,
             bones_to_inverse_bind_poses,
             bone_names_vec,
             inverse_bind_matrices_vec,
+            meshes,
         );
     }
 }
@@ -44,12 +86,8 @@ fn main() {
     let filename = args[1].clone();
 
     let post_process_flags = vec![
-        PostProcess::CalculateTangentSpace,
         PostProcess::Triangulate,
-        PostProcess::JoinIdenticalVertices,
-        PostProcess::SortByPrimitiveType,
         PostProcess::GenerateNormals, // Example: Generate normals if missing
-        PostProcess::GenerateUVCoords, // Example: Generate UVs if missing
     ];
     let mut bones_to_inverse_bind_poses = HashMap::<String, [[f32; 4]; 4]>::new();
     let mut result = SerializedModel::new();
@@ -57,6 +95,14 @@ fn main() {
     let scene = Scene::from_file(&filename, post_process_flags).unwrap();
     for m in scene.meshes {
         let mut mesh = SerializedMesh::new();
+
+        mesh.min_extents = [m.aabb.min.x, m.aabb.min.y, m.aabb.min.z];
+        mesh.max_extents = [m.aabb.max.x, m.aabb.max.y, m.aabb.max.z];
+        mesh.dimensions = [
+            mesh.max_extents[0] - mesh.min_extents[0],
+            mesh.max_extents[1] - mesh.min_extents[1],
+            mesh.max_extents[2] - mesh.min_extents[2],
+        ];
         for v in m.vertices {
             mesh.positions.push([v.x, v.y, v.z]);
         }
@@ -88,48 +134,12 @@ fn main() {
                         if w == 0.0 {
                             mesh.bone_weights[id as usize][i] = weight;
                             mesh.bone_indices[id as usize][i] = bone_name_idx as u32;
+                            break
                         }
                         i += 1;
                     }
                 }
-                let mut ibp = [[0.0 as f32; 4]; 4];
-                // ibp[0][0] = b.offset_matrix.a1;
-                // ibp[0][1] = b.offset_matrix.a2;
-                // ibp[0][2] = b.offset_matrix.a3;
-                // ibp[0][3] = b.offset_matrix.a4;
-                // ibp[1][0] = b.offset_matrix.b1;
-                // ibp[1][1] = b.offset_matrix.b2;
-                // ibp[1][2] = b.offset_matrix.b3;
-                // ibp[1][3] = b.offset_matrix.b4;
-                // ibp[2][0] = b.offset_matrix.c1;
-                // ibp[2][1] = b.offset_matrix.c2;
-                // ibp[2][2] = b.offset_matrix.c3;
-                // ibp[2][3] = b.offset_matrix.c4;
-                // ibp[3][0] = b.offset_matrix.d1;
-                // ibp[3][1] = b.offset_matrix.d2;
-                // ibp[3][2] = b.offset_matrix.d3;
-                // ibp[3][3] = b.offset_matrix.d4;
-
-                ibp[0][0] = b.offset_matrix.a1;
-                ibp[1][0] = b.offset_matrix.a2;
-                ibp[2][0] = b.offset_matrix.a3;
-                ibp[3][0] = b.offset_matrix.a4;
-                
-                ibp[0][1] = b.offset_matrix.b1;
-                ibp[1][1] = b.offset_matrix.b2;
-                ibp[2][1] = b.offset_matrix.b3;
-                ibp[3][1] = b.offset_matrix.b4;
-                
-                ibp[0][2] = b.offset_matrix.c1;
-                ibp[1][2] = b.offset_matrix.c2;
-                ibp[2][2] = b.offset_matrix.c3;
-                ibp[3][2] = b.offset_matrix.c4;
-                
-                ibp[0][3] = b.offset_matrix.d1;
-                ibp[1][3] = b.offset_matrix.d2;
-                ibp[2][3] = b.offset_matrix.d3;
-                ibp[3][3] = b.offset_matrix.d4;
-
+                let ibp = matrix_to_raw(b.offset_matrix);
 
                 bones_to_inverse_bind_poses.insert(name.clone(), ibp);
             }
@@ -148,10 +158,12 @@ fn main() {
     if has_bones {
         // We use our recursive helper to gather all the bones and their offset matrices
         recursive_helper(
-            scene.root.unwrap().borrow(),
+            &scene.root.unwrap().borrow(),
+            &glam::Mat4::IDENTITY,
             &bones_to_inverse_bind_poses,
             &mut result.bone_names,
             &mut result.inverse_bind_matrices,
+            &mut result.meshes,
         );
 
         // We now need to change the bone indices on all the serialized meshes to reflect the bones
@@ -174,6 +186,54 @@ fn main() {
 
     for mat in scene.materials {
         let mut material = SerializedMaterial::new();
+        //println!("Materials properties {:#?}", mat.properties);
+        let mut i = 0;
+
+        while i < mat.properties.len() {
+            let index = &mat.properties[i].index;
+            let key = &mat.properties[i].key;
+            let data = &mat.properties[i].data;
+            let semantic = &mat.properties[i].semantic;
+
+            i += 1;
+
+            if key == "$mat.name" {
+                match data {
+                    PropertyTypeInfo::Buffer(_) => {}
+                    PropertyTypeInfo::IntegerArray(_) => {}
+                    PropertyTypeInfo::FloatArray(_) => {}
+                    PropertyTypeInfo::String(val) => {
+                        material.name = val.to_string();
+                    }
+                }
+            }
+            println!(
+                "Material properties index {}, key {}, data {:?}, semantic {:?}",
+                index, key, data, semantic
+            );
+
+            if key == "$tex.file" && semantic == &TextureType::Diffuse {
+                match data {
+                    PropertyTypeInfo::Buffer(_) => {}
+                    PropertyTypeInfo::IntegerArray(_) => {}
+                    PropertyTypeInfo::FloatArray(_) => {}
+                    PropertyTypeInfo::String(val) => {
+                        material.diffuse_texture_path = val.to_string();
+                    }
+                }
+            }
+
+            if key == "$tex.file" && semantic == &TextureType::Normals {
+                match data {
+                    PropertyTypeInfo::Buffer(_) => {}
+                    PropertyTypeInfo::IntegerArray(_) => {}
+                    PropertyTypeInfo::FloatArray(_) => {}
+                    PropertyTypeInfo::String(val) => {
+                        material.normals_texture_path = val.to_string();
+                    }
+                }
+            }
+        }
 
         if mat.textures.contains_key(&TextureType::Diffuse) {
             let diffuse_texture = &mat.textures[&TextureType::Diffuse];
@@ -181,7 +241,8 @@ fn main() {
                 Rc::<RefCell<russimp_ng::material::Texture>>::try_unwrap(diffuse_texture.clone())
                     .unwrap()
                     .into_inner();
-            material.diffuse_texture_path = diffuse.filename;
+            material.diffuse_texture_path = diffuse.filename.clone();
+            println!("contains diffuse texture: {}", diffuse.filename.clone());
         }
 
         if mat.textures.contains_key(&TextureType::Normals) {
